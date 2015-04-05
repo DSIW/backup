@@ -4,6 +4,7 @@
 
 * [ccollect](http://www.nico.schottelius.org/software/ccollect/)
 * `rsync`
+* [sublet-lastbackups](http://www.github.com/DSIW/sublet-lastbackups) (optional)
 
 ## Installation
 
