@@ -1,0 +1,36 @@
++ /usr
++ /usr/local
++ /usr/local/bin
++ /usr/local/sbin
+- /usr/local/*
+- /usr/*
+
++ /home/dsiw
+- /home/dsiw/.local/share/Trash
+- /home/dsiw/.Trash
+- /home/dsiw/.vifm/Trash
+
++ /etc
++ /opt
++ /boot
+
++ /var
++ /var/cache/
++ /var/cache/pacman
++ /var/cache/pkgfile
+- /var/cache/*
++ /var/log
++ /var/mail
++ /var/spool/
++ /var/spool/mail/
+- /var/spool/*
++ /var/www
++ /var/lib
++ /var/lib/mysql
++ /var/lib/pacman
+- /var/lib/*
+- /var/*
+
+- lost+found
+- no-backup
+- /*

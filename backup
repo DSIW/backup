@@ -1,0 +1,145 @@
+#!/usr/bin/env ruby
+# encoding: utf-8
+
+require_relative "backup_lib"
+include BackupLib
+
+require "colorize"
+require "optparse"
+require "json"
+
+CCOLLECT_LOGWRAPPER = "#{HOME}/sys/bin/ccollect_logwrapper"
+
+# Interval.source = Interval::SOURCES::BACKUP_DIR
+
+class IntervalPresenter
+  attr_reader :object
+
+  def initialize(object)
+    @object = object
+  end
+
+  def message
+    [active, name, old.ljust(26), ago].join(' ')
+  end
+
+  def active
+    object.active? ? '[✓]' : '[ ]'
+  end
+
+  def name
+    "#{object.name.upcase.ljust(Interval.names.max.length + 1)}"
+  end
+
+  def old
+    old? ? Utils.colorize('needs backup', :red) : Utils.colorize('UP TO DATE', :green)
+  end
+
+  def ago
+    if never_executed?
+      "(never executed)"
+    else
+      "(#{Utils.pluralize(duration, *units)} ago)"
+    end
+  end
+
+  def method_missing(meth, *args, &blk)
+    if object.respond_to? meth
+      object.send(meth, *args, &blk)
+    else
+      super
+    end
+  end
+end
+
+module Utils
+  def self.colorize(string, color)
+    if string.respond_to? color
+      string.send(color)
+    else
+      string
+    end
+  end
+
+  def self.pluralize(count, singular, plural, options = {})
+    suffix = count.abs == 1 ? singular : plural
+    [count, suffix].join(' ')
+  end
+
+  # with continous output
+  def self.system(command)
+    IO.popen command do |descriptor|
+      puts descriptor.readline until descriptor.eof?
+    end
+  end
+
+  def self.exit_with_error(message)
+    STDERR.puts message
+    exit 1
+  end
+
+  def self.parse_options
+    options = {}
+    OptionParser.new do |opts|
+      opts.banner = "Usage: []"
+
+      opts.on("-u", "--update-status", "Update ~/.lastbackups") do |v|
+        options[:update_status] = v
+      end
+
+      opts.on("-n", "--dry-run", "Dry run") do |v|
+        options[:dry_run] = v
+      end
+
+      options[:intervals] = CONFIG[:intervals] || DEFAULT_INTERVALS
+      opts.on("--only #{SETTINGS_BY_INTERVAL.keys.join(',')}", Array, "Only update specified intervals") do |v|
+        options[:intervals] = v
+      end
+
+      opts.on_tail("-h", "--help", "Show this message") do
+        puts opts
+        exit
+      end
+    end.parse!
+    options
+  end
+end
+
+
+Utils.exit_with_error "Please run this as root."         unless `id -u`.chomp == "0"
+Utils.exit_with_error "Backup directory is not mounted." if !File.exist?(BACKUP_DIR) || Dir.glob("#{BACKUP_DIR}/*/").empty?
+
+begin
+  CONFIG = JSON.parse(File.read("#{HOME}/.backuprc"), symbolize_names: true)
+rescue Exception => e
+  puts "Config parsing error:"
+  puts e.message.red
+  puts "Using default configuration"
+  puts
+  CONFIG = {}
+end
+
+OPTIONS = Utils.parse_options
+
+# Do backup
+unless OPTIONS[:update_status]
+  # Print status
+  Interval.all.each { |interval| puts IntervalPresenter.new(interval).message }
+
+  old_intervals = Interval.olds
+
+  puts
+  puts Utils.colorize("Yeah, nothing to backup!", :green) if old_intervals.empty?
+
+  old_intervals.each do |interval|
+    puts "#{interval.name.capitalize} backup started..."
+    Utils.system("#{CCOLLECT_LOGWRAPPER} #{interval.name} #{SOURCE}") unless OPTIONS[:dry_run]
+  end
+
+  puts
+  puts "Please don't forget to unmount via `umountwd`."
+end
+
+ConfigFile.new.write(Interval.all)
+# Update sublet
+`subtler -su lastbackups` rescue nil
