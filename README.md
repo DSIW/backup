@@ -16,7 +16,7 @@ to protect you against fatal system reactions by your commands. Alternatively yo
 
 Yeah, nothing to backup!
 
-Please don't forget to unmount via `umountwd`.
+Please don't forget to unmount.
 ```
 
 The hook in the first column shows you the active state of this interval.
@@ -36,6 +36,7 @@ The hook in the first column shows you the active state of this interval.
 1. Move ccollect directory to `/etc`
 1. Look into `*.TODO` files and follow the instructions
 1. Move `backup` and `backup_lib.rb` to a directory which is added to `$PATH`
+1. Change `BackupLib::HOME` to your home path.
 
 ## Contributing
 

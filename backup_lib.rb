@@ -4,7 +4,7 @@ require "date"
 require "time"
 
 module BackupLib
-  HOME = ENV['HOME']
+  HOME = "/home/dsiw"
   SOURCE = "home"
   CCOLLECT_CONF = "/etc/ccollect"
   BACKUP_DIR = File.read("#{CCOLLECT_CONF}/sources/#{SOURCE}/destination").chomp

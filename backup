@@ -1,12 +1,22 @@
 #!/usr/bin/env ruby
 # encoding: utf-8
 
-require_relative "backup_lib"
-include BackupLib
-
 require "colorize"
 require "optparse"
 require "json"
+
+require_relative "backup_lib"
+include BackupLib
+
+begin
+  CONFIG = JSON.parse(File.read("#{HOME}/.backuprc"), symbolize_names: true)
+rescue Exception => e
+  puts "Config parsing error:"
+  puts e.message.red
+  puts "Using default configuration"
+  puts
+  CONFIG = {}
+end
 
 CCOLLECT_LOGWRAPPER = "#{HOME}/sys/bin/ccollect_logwrapper"
 
@@ -74,7 +84,7 @@ module Utils
   end
 
   def self.exit_with_error(message)
-    STDERR.puts message
+    STDERR.puts Utils.colorize(message, :red)
     exit 1
   end
 
@@ -105,20 +115,6 @@ module Utils
   end
 end
 
-
-Utils.exit_with_error "Please run this as root."         unless `id -u`.chomp == "0"
-Utils.exit_with_error "Backup directory is not mounted." if !File.exist?(BACKUP_DIR) || Dir.glob("#{BACKUP_DIR}/*/").empty?
-
-begin
-  CONFIG = JSON.parse(File.read("#{HOME}/.backuprc"), symbolize_names: true)
-rescue Exception => e
-  puts "Config parsing error:"
-  puts e.message.red
-  puts "Using default configuration"
-  puts
-  CONFIG = {}
-end
-
 OPTIONS = Utils.parse_options
 
 # Do backup
@@ -133,13 +129,17 @@ unless OPTIONS[:update_status]
 
   old_intervals.each do |interval|
     puts "#{interval.name.capitalize} backup started..."
-    Utils.system("#{CCOLLECT_LOGWRAPPER} #{interval.name} #{SOURCE}") unless OPTIONS[:dry_run]
+    unless OPTIONS[:dry_run]
+      Utils.exit_with_error "Please run this as root." unless `id -u`.chomp == "0"
+      Utils.exit_with_error "Backup directory is not mounted." if !File.exist?(BACKUP_DIR) || Dir.glob("#{BACKUP_DIR}/*/").empty?
+      Utils.system("#{CCOLLECT_LOGWRAPPER} #{interval.name} #{SOURCE}")
+    end
   end
 
   puts
-  puts "Please don't forget to unmount via `umountwd`."
+  puts "Please don't forget to unmount."
 end
 
-ConfigFile.new.write(Interval.all)
+ConfigFile.new.write(Interval.all) unless OPTIONS[:dry_run]
 # Update sublet
 `subtler -su lastbackups` rescue nil
