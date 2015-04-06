@@ -8,7 +8,6 @@ module BackupLib
   SOURCE = "home"
   CCOLLECT_CONF = "/etc/ccollect"
   BACKUP_DIR = File.read("#{CCOLLECT_CONF}/sources/#{SOURCE}/destination").chomp
-  DEFAULT_INTERVALS = %w[daily weekly monthly yearly]
   CONFIG_FILE_PATH = "#{HOME}/.lastbackups"
 
   SETTINGS_BY_INTERVAL = {
