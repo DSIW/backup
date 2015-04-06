@@ -75,6 +75,14 @@ module Utils
     end.parse!
     options
   end
+
+  def self.root?
+    `id -u`.chomp == "0"
+  end
+
+  def self.mounted_backup_dir?
+    File.exist?(BACKUP_DIR) && !Dir.glob("#{BACKUP_DIR}/*/").empty?
+  end
 end
 
 OPTIONS = Utils.parse_options
@@ -92,8 +100,8 @@ unless OPTIONS[:update_status]
   old_intervals.each do |interval|
     puts "#{interval.name.capitalize} backup started..."
     unless OPTIONS[:dry_run]
-      Utils.exit_with_error "Please run this as root." unless `id -u`.chomp == "0"
-      Utils.exit_with_error "Backup directory is not mounted." if !File.exist?(BACKUP_DIR) || Dir.glob("#{BACKUP_DIR}/*/").empty?
+      Utils.exit_with_error "Please run this as root." unless Utils.root?
+      Utils.exit_with_error "Backup directory is not mounted." unless Utils.mounted_backup_dir?
       Utils.system("#{CCOLLECT_LOGWRAPPER} #{interval.name} #{SOURCE}")
     end
   end
