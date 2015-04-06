@@ -20,10 +20,6 @@ rescue Exception => e
   }
 end
 
-CCOLLECT_LOGWRAPPER = "#{HOME}/sys/bin/ccollect_logwrapper"
-
-# Interval.source = Interval::SOURCES::BACKUP_DIR
-
 module Utils
   def self.colorize(string, color)
     if string.respond_to? color
@@ -86,6 +82,10 @@ module Utils
 end
 
 OPTIONS = Utils.parse_options
+
+Interval.source = Utils.mounted_backup_dir? ? Interval::SOURCES::BACKUP_DIR : Interval::SOURCES::CONFIG_FILE
+
+CCOLLECT_LOGWRAPPER = "#{HOME}/sys/bin/ccollect_logwrapper"
 
 # Do backup
 unless OPTIONS[:update_status]
