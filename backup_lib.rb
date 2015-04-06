@@ -170,6 +170,46 @@ module BackupLib
     end
   end
 
+  class IntervalPresenter
+    attr_reader :object
+
+    def initialize(object)
+      @object = object
+    end
+
+    def message
+      [active, name, old.ljust(26), ago].join(' ')
+    end
+
+    def active
+      object.active? ? '[✓]' : '[ ]'
+    end
+
+    def name
+      "#{object.name.upcase.ljust(Interval.names.max.length + 1)}"
+    end
+
+    def old
+      old? ? Utils.colorize('needs backup', :red) : Utils.colorize('UP TO DATE', :green)
+    end
+
+    def ago
+      if never_executed?
+        "(never executed)"
+      else
+        "(#{Utils.pluralize(duration, *units)} ago)"
+      end
+    end
+
+    def method_missing(meth, *args, &blk)
+      if object.respond_to? meth
+        object.send(meth, *args, &blk)
+      else
+        super
+      end
+    end
+  end
+
   class ConfigFile
     def initialize
       @file_path = File.expand_path(CONFIG_FILE_PATH)
