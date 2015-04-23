@@ -97,7 +97,7 @@ module BackupLib
       # group dir names by interval
       Dir.glob("#{BACKUP_DIR}/*/").each do |dir_name|
         found_interval = dir_name.scan(Regexp.union(Interval.names)).first
-        groups[found_interval] << dir_name
+        groups[found_interval] << dir_name if groups.include? found_interval
       end
 
       # convert last dir name to date
