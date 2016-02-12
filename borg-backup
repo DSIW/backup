@@ -1,0 +1,78 @@
+#!/usr/bin/env ruby
+
+require 'yaml'
+require 'fileutils'
+require 'open3'
+
+# config_home = ENV['XDG_CONFIG_HOME'] || File.join(ENV['HOME'], '.config')
+config_home = '/etc'
+config = YAML.load_file(File.join(config_home, 'borg', 'config.yml'))
+
+root = ENV['BORG_ROOT'] || config['root']
+backups = config['backups']
+
+backup_name = ARGV.first
+backup = backups[backup_name]
+dirname = backup['dirname']
+
+if ARGV.size == 0
+  puts "Usage: #{File.basename(__FILE__)} {#{backups.keys.join(',')}} [borg-options]"
+  exit 1
+end
+
+abort("Unknown backup: #{backup_name}") unless backup
+
+name = Time.now.strftime(backup['naming'])
+repo = File.join(root, dirname || backup_name)
+# env = { 'BORG_REPO' => repo }
+env = {}
+if config['destinations'][backup['destination_key']]['encrypted']
+  passphrase = `pass show encryption/backup | head -1`.chomp
+  env['BORG_PASSPHRASE'] = passphrase
+end
+sudo = backup['sudo']
+
+# Init borg repository
+# begin
+#   unless File.read(File.join(env['BORG_REPO'], 'README')).downcase.include?('borg')
+#     raise 'No borg repo' # init repo
+#   end
+# rescue Exception => e
+#   system(sudo ? 'sudo' : '', 'borg', 'init', env['BORG_REPO'])
+# end
+
+additional_args = []
+
+%w(exclude exclude-if-present).each do |option|
+  next unless backup[option]
+  additional_args << backup[option].reduce([]) { |args, pattern| [*args, "--#{option}", "'#{pattern}'"] }
+end
+
+additional_flags = (backup['flags'] || []).map { |flag| "--#{flag}" }
+additional_flags << ARGV.select { |option| option.start_with?('-') }
+additional_flags.flatten!
+
+def system(*args)
+  # continous output
+  if args.first.is_a? Hash
+    args[0] = args.first.map {|k,v| [k, "'#{v}'"].join('=')}.join(' ')
+  end
+  args.flatten!
+  IO.popen(args.join(' ')) do |descriptor|
+    puts descriptor.readline until descriptor.eof?
+  end
+end
+
+(backup['run_before'] || []).all? { |cmd| system(sudo ? 'sudo' : '', cmd); $?.success? } || abort('before command failed')
+
+args = [sudo ? 'sudo' : '', 'borg', 'create', '-C', backup['compression'], *additional_args, *additional_flags, "#{repo}::#{name}", *backup['sources']]
+
+system(env, *args)
+
+unless $? == 0
+  abort("Backup failed.\nDo you have connection to borg repository #{repo}?\nTry it manually:\n#{env.map {|k,v| [k,v].join('=')}.join(' ')} #{args.join(' ')}")
+end
+
+exit unless backup['prune']
+system(env, sudo ? 'sudo' : '', 'borg', 'prune', *backup['prune'].reduce([]) { |args, (k, v)| [*args, "--keep-#{k}", v.to_s] }, repo)
+(backup['run_after'] || []).all? { |cmd| system(sudo ? 'sudo' : '', cmd); $?.success? } || abort('after command failed')

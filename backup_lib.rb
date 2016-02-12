@@ -2,13 +2,13 @@
 
 require "date"
 require "time"
+require "yaml"
 
 module BackupLib
   HOME = "/home/dsiw"
-  SOURCE = "home"
-  CCOLLECT_CONF = "/etc/ccollect"
-  BACKUP_DIR = File.read("#{CCOLLECT_CONF}/sources/#{SOURCE}/destination").chomp
-  CONFIG_FILE_PATH = "#{HOME}/.lastbackups"
+  CACHE_FILE_PATH = "#{HOME}/.lastbackups"
+  CONFIG = YAML.load_file(File.join('/etc', 'borg', 'config.yml'))
+  BACKUPS  = CONFIG['backups']
 
   SETTINGS_BY_INTERVAL = {
     yearly: {
@@ -43,76 +43,96 @@ module BackupLib
     }
   }
 
+  class SSHConfig
+    attr_reader :path
+
+    def initialize(path = nil)
+      path = File.join(ENV['HOME'], '.ssh', 'config') if path.to_s.length == 0
+      @path = path
+    end
+
+    def hosts
+      @hosts ||= parse
+    end
+
+    private
+
+    def parse
+      raw_datasets = []
+      current_dataset = []
+      File.readlines(@path).each do |line|
+        line = line.chomp.sub(/^\s+/, '').sub(/\s*#.*$/, '')
+        next if line.start_with? '#'
+
+        if line =~ /Host .*/
+          raw_datasets << current_dataset unless current_dataset.empty?
+          current_dataset = []
+        end
+
+        current_dataset << line unless line.empty?
+      end
+
+      # last entry
+      raw_datasets << current_dataset unless current_dataset.empty?
+
+      datasets = raw_datasets.reduce({}) do |hash, raw_dataset|
+        key = raw_dataset[0].split(/\s+/)[1..-1].join(' ')
+        options = Hash[raw_dataset[1..-1].map { |option| option.split(/\s+/) }]
+        hash.merge!(key => options)
+      end
+    end
+  end
+
   class Interval
     YEAR_OLD = 1990
     DATE_OLD = DateTime.new(YEAR_OLD, 1, 1)
 
-    module SOURCES
-      BACKUP_DIR = "backup_dir"
-      CONFIG_FILE = "config_file"
-    end
-
-    def self.source=(source)
-      @source = source
-    end
-
-    def self.source
-      @source || SOURCES::BACKUP_DIR
-    end
-
+    attr_reader :name
     attr_reader :name
 
     def self.all
-      from_names(SETTINGS_BY_INTERVAL.keys)
-    end
-
-    def self.used
-      from_names(OPTIONS[:intervals])
-    end
-
-    def self.from_names(names)
       names.map { |name| new(name.to_s) }
     end
 
     def self.olds
-      used.select { |interval| interval.old? }
+      all.select { |interval| interval.old? }
     end
 
     def self.names
-      all.map(&:name)
+      BACKUPS.keys
     end
 
-    def self.last_dates_by_interval
-      send("from_#{source}")
+    def self.dirnames
+      BACKUPS.keys.map do |key|
+        BACKUPS[key]['dirname']
+      end
     end
 
     def self.from_config_file
-      ConfigFile.new.read
+      @from_config_file ||= CacheFile.new.read
     end
 
     def self.from_backup_dir
-      groups = {}
-      all.map(&:name).each { |interval| groups[interval] = [] }
-
-      # group dir names by interval
-      Dir.glob("#{BACKUP_DIR}/*/").each do |dir_name|
-        found_interval = dir_name.scan(Regexp.union(Interval.names)).first
-        groups[found_interval] << dir_name if groups.include? found_interval
-      end
-
-      # convert last dir name to date
-      all.map(&:name).each do |interval|
-        last_dir = groups[interval].sort.last
-        if last_dir
-          raw_date = File.basename(last_dir).scan(/\d{8}-\d{4}/).first
-          date = DateTime.strptime(raw_date, "%Y%m%d-%H%M")
-        else
-          date = DATE_OLD
+      @from_backup_dir ||= begin
+        groups = {}
+        names.each do |name|
+          begin
+            interval = Interval.new(name)
+            raise "Not mounted" unless interval.mounted?
+            output = `#{BACKUPS[name]['sudo'] ? 'sudo' : ''} borg list #{interval.destination}/#{BACKUPS[name]['dirname']} | tail -1`.chomp
+            raw_date = output.match(/^(?<name>.*?)\s+/)[:name]
+            if raw_date.to_s == ""
+              date = DATE_OLD
+            else
+              date = DateTime.strptime(raw_date, BACKUPS[name]['naming'])
+            end
+            groups[name] = date
+          rescue Exception => e
+            groups[name] = from_config_file[name]
+          end
         end
-        groups[interval] = date
+        groups
       end
-
-      groups
     end
 
     def initialize(name)
@@ -120,11 +140,11 @@ module BackupLib
     end
 
     def setting
-      SETTINGS_BY_INTERVAL[name.to_sym]
+      SETTINGS_BY_INTERVAL[interval.to_sym]
     end
 
-    def active?
-      OPTIONS[:intervals].include? name
+    def interval
+      backup_config['min_interval']
     end
 
     def format
@@ -139,8 +159,63 @@ module BackupLib
       setting[:human_format]
     end
 
+    def mounted?
+      if remote? && active_vpn?
+        `ping -W 1 -c 1 #{host} >/dev/null`
+        $? == 0 # connected
+      else
+        File.exist?(destination) && !Dir.glob("#{destination}/*/").empty?
+      end
+    end
+
+    def active_vpn?
+      `ifconfig | grep -q tun0`
+      $? == 0
+    end
+
+    def remote?
+      destination.include? ':'
+    end
+
+    def destination
+      destination_config['path']
+    end
+
+    def destination_host
+      destination_config['path'].split(':')[0]
+    end
+
+    def vpn_config
+      destination_config['vpn_conf']
+    end
+
+    def dirname
+      backup_config['dirname']
+    end
+
+    def destination_key
+      backup_config['destination_key']
+    end
+
+    def host
+      (destination_config['host'] || ssh_hostname).to_s
+    end
+
+    def notify(message)
+      notification_port = destination_config['notification_port'].to_s
+      if !host.nil? && !notification_port.nil? && message.to_s.length > 0
+        system('message_ping', host, notification_port, "'#{message.gsub("'", '"')}'")
+      end
+    end
+
     def last_date
-      self.class.last_dates_by_interval[name]
+      last_dates = self.class.from_config_file
+      last_dates[name] || DATE_OLD
+    end
+
+    def live_last_date
+      last_dates = self.class.from_backup_dir
+      last_dates[name] || DATE_OLD
     end
 
     def last_date_without_useless_information
@@ -163,6 +238,24 @@ module BackupLib
 
     private
 
+    def ssh_hostname
+      ssh_config = SSHConfig.new
+      ssh_hosts = ssh_config.hosts
+      ssh_host = destination.split(':').first
+      unless ssh_hosts.has_key? ssh_host
+        raise "Host #{ssh_host} not found in #{ssh_config.path}!"
+      end
+      ssh_hosts[ssh_host]['HostName']
+    end
+
+    def destination_config
+      CONFIG['destinations'][destination_key]
+    end
+
+    def backup_config
+      BACKUPS[name] || {}
+    end
+
     # Convert current time to UTC because `last_date` is set to UTC
     def now_without_timezone
       Time.parse(Time.now.strftime('%Y-%m-%d %H:%M:%S UTC'))
@@ -172,20 +265,17 @@ module BackupLib
   class IntervalPresenter
     attr_reader :object
 
-    def initialize(object)
+    def initialize(object, options = {})
       @object = object
+      @options = options
     end
 
     def message
-      [active, name, old.ljust(26), ago].join(' ')
+      [dirname, old.ljust(26), ago].join(' ')
     end
 
-    def active
-      object.active? ? '[✓]' : '[ ]'
-    end
-
-    def name
-      "#{object.name.upcase.ljust(Interval.names.max.length + 1)}"
+    def dirname
+      object.dirname.ljust(Interval.dirnames.map(&:length).max + 1)
     end
 
     def old
@@ -196,8 +286,14 @@ module BackupLib
       if never_executed?
         "(never executed)"
       else
-        "(#{Utils.pluralize(duration, *units)} ago)"
+        "(#{Utils.pluralize(duration, *units)} ago at #{@object.last_date.strftime('%F %H:%M')})"
       end
+    end
+
+    private
+
+    def old?
+      @options[:force_old] ? true : object.old?
     end
 
     def method_missing(meth, *args, &blk)
@@ -209,15 +305,15 @@ module BackupLib
     end
   end
 
-  class ConfigFile
+  class CacheFile
     def initialize
-      @file_path = File.expand_path(CONFIG_FILE_PATH)
+      @file_path = File.expand_path(CACHE_FILE_PATH)
     end
 
     def write(intervals)
       File.open(@file_path, 'w') do |file|
         intervals.each do |interval|
-          file.puts [interval.name, interval.last_date.strftime('%FT%H:%M:%S')].join(';')
+          file.puts [interval.name, interval.live_last_date.strftime('%FT%H:%M:%S')].join(';')
         end
       end
     end
@@ -229,8 +325,8 @@ module BackupLib
 
       File.open(@file_path, "r") do |file|
         file.each_line do |line|
-          interval_name, last_date = line.chomp.split(';')
-          groups[interval_name] = Time.parse(last_date)
+          name, last_date = line.chomp.split(';')
+          groups[name] = Time.parse(last_date)
         end
       end
 

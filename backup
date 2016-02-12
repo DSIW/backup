@@ -1,24 +1,19 @@
 #!/usr/bin/env ruby
 # encoding: utf-8
 
-require "colorize"
+begin
+  require "colorize"
+rescue LoadError => e
+  STDERR.puts "Couldn't load gem `colorize`. Continue without colorizing."
+end
 require "optparse"
 require "json"
+require "yaml"
 
 require_relative "backup_lib"
 include BackupLib
 
-begin
-  CONFIG = JSON.parse(File.read("#{HOME}/.backuprc"), symbolize_names: true)
-rescue Exception => e
-  puts "Config parsing error:"
-  puts e.message.red
-  puts "Using default configuration"
-  puts
-  CONFIG = {
-    intervals: %w[daily weekly monthly yearly]
-  }
-end
+INTERVALS = %w[weekly monthly yearly]
 
 module Utils
   def self.colorize(string, color)
@@ -34,34 +29,23 @@ module Utils
     [count, suffix].join(' ')
   end
 
-  # with continous output
-  def self.system(command)
-    IO.popen command do |descriptor|
-      puts descriptor.readline until descriptor.eof?
-    end
-  end
-
-  def self.exit_with_error(message)
-    STDERR.puts Utils.colorize(message, :red)
-    exit 1
-  end
-
   def self.parse_options
-    options = {}
+    options = {intervals: INTERVALS}
     OptionParser.new do |opts|
-      opts.banner = "Usage: []"
+      opts.banner = "Usage: #{File.basename(__FILE__)} [OPTIONS]"
+      opts.separator ""
+      opts.separator "OPTIONS:"
 
-      opts.on("-u", "--update-status", "Update ~/.lastbackups") do |v|
-        options[:update_status] = v
-      end
-
-      opts.on("-n", "--dry-run", "Dry run") do |v|
+      opts.on("-n", "--dry-run", "Run without executing backups") do |v|
         options[:dry_run] = v
       end
 
-      options[:intervals] = CONFIG[:intervals]
-      opts.on("--only #{SETTINGS_BY_INTERVAL.keys.join(',')}", Array, "Only update specified intervals") do |v|
-        options[:intervals] = v
+      opts.on("-f", "--force", "Backup independent of status") do
+        options[:force] = true
+      end
+
+      opts.on("-l", "--local", "Don't backup to remotes") do
+        options[:only_local] = true
       end
 
       opts.on_tail("-h", "--help", "Show this message") do
@@ -72,44 +56,103 @@ module Utils
     options
   end
 
-  def self.root?
-    `id -u`.chomp == "0"
-  end
-
-  def self.mounted_backup_dir?
-    File.exist?(BACKUP_DIR) && !Dir.glob("#{BACKUP_DIR}/*/").empty?
+  def self.exit_with_error(message)
+    STDERR.puts Utils.colorize(message, :red)
+    exit 1
   end
 end
 
 OPTIONS = Utils.parse_options
 
-Interval.source = Utils.mounted_backup_dir? ? Interval::SOURCES::BACKUP_DIR : Interval::SOURCES::CONFIG_FILE
+# Print status
+Interval.all.group_by { |i| i.destination_key }.each_with_index do |(destination, intervals), index|
+  puts if index > 0
+  puts "DESTINATION: #{Utils.colorize(destination + (intervals.first.remote? ? ' (remote)' : ''), :blue)}"
 
-CCOLLECT_LOGWRAPPER = "#{HOME}/sys/bin/ccollect_logwrapper"
-
-# Do backup
-unless OPTIONS[:update_status]
-  # Print status
-  Interval.all.each { |interval| puts IntervalPresenter.new(interval).message }
-
-  old_intervals = Interval.olds
-
-  puts
-  puts Utils.colorize("Yeah, nothing to backup!", :green) if old_intervals.empty?
-
-  old_intervals.each do |interval|
-    puts "#{interval.name.capitalize} backup started..."
-    unless OPTIONS[:dry_run]
-      Utils.exit_with_error "Please run this as root." unless Utils.root?
-      Utils.exit_with_error "Backup directory is not mounted." unless Utils.mounted_backup_dir?
-      Utils.system("#{CCOLLECT_LOGWRAPPER} #{interval.name} #{SOURCE}")
-    end
+  intervals.each do |interval|
+    puts IntervalPresenter.new(interval, force_old: OPTIONS[:force]).message
   end
-
-  puts
-  puts "Please don't forget to unmount."
 end
 
-ConfigFile.new.write(Interval.all) unless OPTIONS[:dry_run]
-# Update sublet
-`subtler -su lastbackups` rescue nil
+old_backups = OPTIONS[:force] ? Interval.all : Interval.olds
+
+puts
+puts Utils.colorize("Yeah, nothing to backup!", :green) if old_backups.empty?
+
+openvpn_pid = nil
+
+def check_connection(ip, max_times = 3)
+  max_times.times do |i|
+    yield(max_times - i)
+    `ping -W 1 -c 1 #{ip} >/dev/null`
+    return true if $? == 0
+  end
+
+  false
+end
+
+# Do backup
+unless old_backups.empty?
+  groups = old_backups.group_by { |old_backup| old_backup.destination_key }
+  groups.each do |group, old_backups|
+    old_backups.each_with_index do |old_backup, index|
+      if old_backup.remote? && !OPTIONS[:only_local] || !old_backup.remote?
+        puts Utils.colorize("'#{old_backup.dirname}' (#{old_backup.destination_key}) backup started", :blue)
+      end
+
+      unless OPTIONS[:dry_run]
+        if old_backup.remote? && !OPTIONS[:only_local]
+          if old_backup.active_vpn?
+            puts Utils.colorize("VPN connection already established", :green)
+          else
+            openvpn_pid = Process.spawn("sudo openvpn #{old_backup.vpn_config} >/dev/null")
+            Signal.trap("SIGINT") do
+              if openvpn_pid
+                puts Utils.colorize("Killing openvpn process #{openvpn_pid}", :blue)
+                `sudo killall -9 openvpn`
+              end
+              abort
+            end
+            puts Utils.colorize("VPN connection started", :green)
+          end
+        end
+
+        if old_backup.remote? && !OPTIONS[:only_local]
+          connected = check_connection(old_backup.host, 15) do |rest_secs|
+            print Utils.colorize("\rWait #{rest_secs} secs for SSH connection...", :yellow)
+          end
+          if connected
+            puts Utils.colorize("\rConnected to #{old_backup.destination_host}", :green)
+          else
+            puts Utils.colorize("\rCouldn't connect to remote #{old_backup.destination_host}", :red)
+            break
+          end
+
+          old_backup.notify("Backup #{index+1}/#{old_backups.length} started!")
+        end
+
+        if old_backup.remote? && !OPTIONS[:only_local] || !old_backup.remote?
+        # if OPTIONS[:only_local] && !old_backup.remote?
+          system({'BORG_ROOT' => old_backup.destination}, 'borg-backup', old_backup.name)
+        end
+
+        if old_backup.remote? && !OPTIONS[:only_local]
+          old_backup.notify("Backup #{index+1}/#{old_backups.length} finished!")
+        end
+
+        if old_backup.remote? && !OPTIONS[:only_local] || !old_backup.remote?
+          puts # new line
+        end
+      end
+    end
+  end
+end
+
+`sudo killall -9 openvpn` if openvpn_pid
+
+puts
+puts "Don't forget to unmount!"
+
+unless old_backups.empty?
+  CacheFile.new.write(Interval.all) unless OPTIONS[:dry_run]
+end

@@ -1,0 +1,116 @@
+---
+default: &default
+  compression: lz4
+  flags:
+    - one-file-system
+    - exclude-caches
+    - keep-tag-files
+    - stats
+    - progress
+  exclude-if-present:
+    - lost+found
+    - no-backup
+
+# backup settings without destination
+home: &home
+  <<: *default
+  dirname: home
+  sources:
+    - /home/dsiw
+    - /home/scan
+  exclude:
+    - /home/dsiw/media
+    - /home/dsiw/VirtualBox VMs
+    - /home/dsiw/.local/share/Trash
+    - /home/dsiw/.Trash
+    - /home/dsiw/.vifm/Trash
+    - /home/dsiw/.gvfs
+    - /home/dsiw/.cache
+    - /home/dsiw/.thumbnails/
+    - /home/dsiw/sys/mnt
+    - /home/dsiw/sys/virtualboxes
+  naming: '%Y-%m-%d_%H-%M'
+  prune:
+    hourly: 48
+    daily: 30
+    weekly: 8
+    monthly: 6
+    yearly: 3
+  # used by backup_lib
+  sudo: false
+  min_interval: daily
+
+system: &system
+  <<: *default
+  dirname: system
+  run_before:
+    - bash /backup/pre_backup.sh
+  sources:
+    - /backup
+    - /usr/local/bin
+    - /usr/local/sbin
+    - /etc
+    - /boot
+    - /var/log
+    - /var/mail
+    - /var/lib
+  exclude:
+    - /var/tmp
+  naming: '%Y-%m-%d_%H-%M'
+  prune:
+    hourly: 48
+    daily: 30
+    weekly: 8
+    monthly: 6
+    yearly: 3
+  # used by backup_lib
+  sudo: true
+  min_interval: weekly
+
+media: &media
+  <<: *default
+  dirname: media
+  sources:
+    - /home/dsiw/media
+  naming: '%Y-%m-%d_%H-%M'
+  compression: none
+  prune:
+    daily: 3
+    weekly: 4
+    monthly: 2
+    yearly: 1
+  # used by backup_lib
+  sudo: true
+  min_interval: weekly
+
+# backup settings with destination
+destinations:
+  wd:
+    path: /media/backup/borg/dsiw-x230
+    encrypted: false # whole device is encrypted
+  jokke:
+    path: jokke-backup:/media/backups/borg/dsiw-x230
+    vpn_conf: /etc/openvpn/jokke.conf
+    # host: 10.8.0.11
+    notification_port: 3456
+    encrypted: true
+backups:
+  home_wd:
+    <<: *home
+    destination_key: wd
+  system_wd:
+    <<: *system
+    destination_key: wd
+  media_wd:
+    <<: *media
+    destination_key: wd
+  home_jokke:
+    <<: *home
+    destination_key: jokke
+    compression: lzma,6
+    min_interval: weekly
+  system_jokke:
+    <<: *system
+    destination_key: jokke
+    compression: lzma,6
+    min_interval: weekly

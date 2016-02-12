@@ -1,22 +1,23 @@
 # Backup
 
-Backup your files using `ccollect` with different intervals. I suggest to use weekly interval as minimum, so you have a
-backup which is only one week old in the worst case. You can try to use daily or hourly backups on your local partition
-to protect you against fatal system reactions by your commands. Alternatively you can use a version control system like
-`git` for your important files.
+Backup your files using `borg` with different intervals and destinations.
 
 ## Example output
 
 ```
-[✓] YEARLY  UP TO DATE   (0 years ago)
-[✓] MONTHLY UP TO DATE   (0 months ago)
-[✓] WEEKLY  UP TO DATE   (0 weeks ago)
-[ ] DAILY   needs backup (never executed)
-[ ] HOURLY  needs backup (never executed)
+DESTINATION: wd
+home    UP TO DATE   (0 days ago at 2016-02-12 18:00)
+system  UP TO DATE   (0 weeks ago at 2016-02-10 15:28)
+media   UP TO DATE   (0 weeks ago at 2016-02-10 15:29)
 
-Yeah, nothing to backup!
+DESTINATION: jokke (remote)
+home    needs backup (never executed)
+system  needs backup (never executed)
+test    needs backup (never executed)
 
-Please don't forget to unmount.
+'home' (jokke) backup started
+VPN connection already established
+Connected to jokke-backup
 ```
 
 The hook in the first column shows you the active state of this interval.
@@ -24,19 +25,25 @@ The hook in the first column shows you the active state of this interval.
 ## Requirements
 
 * Ruby
-* [ccollect](http://www.nico.schottelius.org/software/ccollect/)
-* `rsync`
-* Gem [colorize](https://rubygems.org/gems/colorize)
-* [Subtle](https://wiki.archlinux.org/index.php/Subtle) plugin [sublet-lastbackups](http://www.github.com/DSIW/sublet-lastbackups) (optional)
+* Gem [colorize](https://rubygems.org/gems/colorize) (optional)
+* `borg`
+* `pass`
+* `openvpn`
 
 ## Installation
 
-1. Install `ccollect`
+1. Install `borg`
+1. Install `pass`
+1. Install `openvpn`
 1. Install gem: `gem install colorize`
-1. Move ccollect directory to `/etc`
-1. Look into `*.TODO` files and follow the instructions
-1. Move `backup` and `backup_lib.rb` to a directory which is added to `$PATH`
-1. Change `BackupLib::HOME` to your home path.
+1. Move `backup`, `borg-backup` and `backup_lib.rb` to a directory which is added to `$PATH`
+1. Change `BackupLib::HOME` in `backup_lib.rb` to your home path. Don't $HOME, because of running with sudo
+1. Add pass file `encryption/backup`
+
+## First backup
+
+1. `borg init ...`
+1. Start `backup -n`
 
 ## Contributing
 
