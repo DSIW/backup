@@ -45,6 +45,9 @@ Don't forget to unmount!
 1. Change `BackupLib::HOME` in `backup_lib.rb` to your home path. Don't $HOME, because of running with sudo
 1. Copy `config.yaml` to `/etc/borg/config.yaml`
 1. Make changes in `/etc/borg/config.yaml`
+1. Add pass file `encryption/backup` via `pass generate encryption/backup`
+1. `mkdir /backup`
+1. Copy `pre_backup.sh` to `/backup/pre_backup.sh` and make changes
 1. Configure remote destination in `$HOME/.ssh/config`
 ```
 # Backup with borg
@@ -58,9 +61,6 @@ Host jokke-backup
     # seconds
     ConnectTimeout 3
 ```
-1. Add pass file `encryption/backup` via `pass generate encryption/backup`
-1. `mkdir /backup`
-1. Copy `pre_backup.sh` to `/backup/pre_backup.sh` and make changes
 
 I recommend using `ssh-agent` and `gpg-agent`.
 
