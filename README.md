@@ -34,6 +34,7 @@ Don't forget to unmount!
 * `borg`
 * `pass`
 * `openvpn`
+* `notify-send` on remote backup server
 
 ## Installation
 
@@ -41,7 +42,9 @@ Don't forget to unmount!
 1. Install `pass`
 1. Install `openvpn`
 1. Install gem: `gem install colorize`
-1. Move `backup`, `borg-backup` and `backup_lib.rb` to a directory which is added to `$PATH`
+1. Copy `backup`, `borg-backup`, `backup_lib.rb` and `message_ping` to a directory which is added to `$PATH`
+1. **For remote backups:** Install `borg` on remote machine and add `message_pong` to `$PATH` for notifications about
+   backup process
 1. Change `BackupLib::HOME` in `backup_lib.rb` to your home path. Don't $HOME, because of running with sudo
 1. Copy `config.yaml` to `/etc/borg/config.yaml`
 1. Make changes in `/etc/borg/config.yaml`
