@@ -51,7 +51,7 @@ Don't forget to unmount!
 1. Add pass file `encryption/backup` via `pass generate encryption/backup`
 1. `mkdir /backup`
 1. Copy `pre_backup.sh` to `/backup/pre_backup.sh` and make changes
-1. Configure remote destination in `$HOME/.ssh/config`
+1. **For remote backups:** Configure remote destination in `$HOME/.ssh/config`
 ```
 # Backup with borg
 # Start VPN /etc/openvpn/jokke.conf first
