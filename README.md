@@ -1,6 +1,6 @@
 # Backup
 
-Backup your files using `borg` with different intervals and destinations.
+Backup your files using [borg](https://borgbackup.github.io) with different intervals and destinations.
 
 ## Example output
 
@@ -17,12 +17,12 @@ system  needs backup (never executed)
 'home' (jokke) backup started
 VPN connection already established
 Connected to jokke-backup
-[Borg output]
+[Borg output...]
 
 'system' (jokke) backup started
 VPN connection already established
 Connected to jokke-backup
-[Borg output]
+[Borg output...]
 
 Don't forget to unmount!
 ```
@@ -43,8 +43,24 @@ Don't forget to unmount!
 1. Install gem: `gem install colorize`
 1. Move `backup`, `borg-backup` and `backup_lib.rb` to a directory which is added to `$PATH`
 1. Change `BackupLib::HOME` in `backup_lib.rb` to your home path. Don't $HOME, because of running with sudo
-1. Copy `config.yaml` to `/etc/borg/config.yaml` and make changes
-1. Add pass file `encryption/backup` via `pass generate encryption/pass`
+1. Copy `config.yaml` to `/etc/borg/config.yaml`
+1. Make changes in `/etc/borg/config.yaml`
+1. Configure remote destination in `$HOME/.ssh/config`
+```
+# Backup with borg
+# Start VPN /etc/openvpn/jokke.conf first
+Host jokke-backup
+    User dsiw
+    HostName <ip>
+    PreferredAuthentications publickey
+    IdentityFile ~/.ssh/id_rsa
+    Port 22
+    # seconds
+    ConnectTimeout 3
+```
+1. Add pass file `encryption/backup` via `pass generate encryption/backup`
+1. `mkdir /backup`
+1. Copy `pre_backup.sh` to `/backup/pre_backup.sh` and make changes
 
 I recommend using `ssh-agent` and `gpg-agent`.
 

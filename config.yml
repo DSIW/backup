@@ -91,7 +91,7 @@ destinations:
   jokke:
     path: jokke-backup:/media/backups/borg/dsiw-x230
     vpn_conf: /etc/openvpn/jokke.conf
-    # host: 10.8.0.11
+    # host: <ip>
     notification_port: 3456
     encrypted: true
 backups:
