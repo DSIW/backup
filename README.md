@@ -18,9 +18,20 @@ test    needs backup (never executed)
 'home' (jokke) backup started
 VPN connection already established
 Connected to jokke-backup
-```
+[Borg output]
 
-The hook in the first column shows you the active state of this interval.
+'system' (jokke) backup started
+VPN connection already established
+Connected to jokke-backup
+[Borg output]
+
+'test' (jokke) backup started
+VPN connection already established
+Connected to jokke-backup
+[Borg output]
+
+Don't forget to unmount!
+```
 
 ## Requirements
 
@@ -38,7 +49,10 @@ The hook in the first column shows you the active state of this interval.
 1. Install gem: `gem install colorize`
 1. Move `backup`, `borg-backup` and `backup_lib.rb` to a directory which is added to `$PATH`
 1. Change `BackupLib::HOME` in `backup_lib.rb` to your home path. Don't $HOME, because of running with sudo
-1. Add pass file `encryption/backup`
+1. Copy `config.yaml` to `/etc/borg/config.yaml` and make changes
+1. Add pass file `encryption/backup` via `pass generate encryption/pass`
+
+I recommend using `ssh-agent` and `gpg-agent`.
 
 ## First backup
 
