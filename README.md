@@ -13,7 +13,6 @@ media   UP TO DATE   (0 weeks ago at 2016-02-10 15:29)
 DESTINATION: jokke (remote)
 home    needs backup (never executed)
 system  needs backup (never executed)
-test    needs backup (never executed)
 
 'home' (jokke) backup started
 VPN connection already established
@@ -21,11 +20,6 @@ Connected to jokke-backup
 [Borg output]
 
 'system' (jokke) backup started
-VPN connection already established
-Connected to jokke-backup
-[Borg output]
-
-'test' (jokke) backup started
 VPN connection already established
 Connected to jokke-backup
 [Borg output]
