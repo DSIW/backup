@@ -124,9 +124,10 @@ else
         end
 
         if old_backup.remote?
-          connected = Utils.check_connection(old_backup.host, 15) do |rest_secs|
+          connected = old_backup.connected?(try: 15) do |rest_secs|
             print Utils.colorize("\rWait #{rest_secs} secs for SSH connection...", :yellow)
           end
+
           if connected
             puts Utils.colorize("\rConnected to #{old_backup.destination_host}", :green)
           else
@@ -137,7 +138,7 @@ else
           old_backup.notify("Backup #{index+1}/#{old_backups.length} started!")
         end
 
-        system({'BORG_ROOT' => old_backup.destination}, 'borg-backup', old_backup.name)
+        old_backup.execute_backup!
 
         if old_backup.remote?
           old_backup.notify("Backup #{index+1}/#{old_backups.length} finished!")

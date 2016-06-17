@@ -1,13 +1,23 @@
 # encoding: utf-8
 
-require "date"
-require "time"
-require "yaml"
+require 'date'
+require 'time'
+require 'yaml'
+require 'open3'
+require 'shellwords'
+require 'socket'
 
 module BackupLib
   HOME = "/home/dsiw"
   CACHE_FILE_PATH = "#{HOME}/.lastbackups"
-  CONFIG = YAML.load_file(File.join('/etc', 'borg', 'config.yml'))
+  CONFIG_HOME = ENV['XDG_CONFIG_HOME'] || File.join(ENV['HOME'], '.config')
+  [CONFIG_HOME, '/etc'].each do |dir|
+    config_file = File.join(dir, 'borg', 'config.yml')
+    if File.exist?(config_file)
+      CONFIG = YAML.load_file(config_file)
+      break
+    end
+  end
   BACKUPS  = CONFIG['backups']
 
   SETTINGS_BY_INTERVAL = {
@@ -88,7 +98,6 @@ module BackupLib
     DATE_OLD = DateTime.new(YEAR_OLD, 1, 1)
 
     attr_reader :name
-    attr_reader :name
 
     def self.all
       names.map { |name| new(name.to_s) }
@@ -113,13 +122,14 @@ module BackupLib
     end
 
     def self.from_backup_dir
-      begin
+      @from_backup_dir ||= begin
         groups = {}
         names.each do |name|
           interval = Interval.new(name)
           if interval.mounted?
-            output = interval.borg_command({}, "borg list #{interval.destination}/#{BACKUPS[name]['dirname']} | tail -1")
-            raw_date = output.match(/^(?<name>.*?)\s+/)[:name]
+            output = interval.execute_command({}, "borg list '#{interval.repo}' | tail -1")
+            output = nil if output == ""
+            raw_date = output && output.match(/^(?<name>.*?)\s+/)[:name]
             if raw_date.to_s == ""
               date = DATE_OLD
             else
@@ -160,8 +170,7 @@ module BackupLib
 
     def mounted?
       if remote? && active_vpn?
-        `ping -W 1 -c 1 #{host} >/dev/null`
-        $? == 0 # connected
+        connected?
       else
         File.exist?(destination) && !Dir.glob("#{destination}/*/").empty?
       end
@@ -172,18 +181,62 @@ module BackupLib
       $? == 0
     end
 
+    def connected?(options = {})
+      options ||= {}
+      max_times = options[:try] || 1
+      max_times.times do |i|
+        yield(max_times - i) if block_given?
+        `ping -W 1 -c 1 #{host} >/dev/null`
+        return true if $? == 0
+      end
+
+      false
+    end
+
     def remote?
       destination.include? ':'
     end
 
-    def borg_command(env, command)
+    def execute_command(env, args, options = {})
       env ||= {}
+      args = [args] if args.is_a? String
+
+      # add passphrase
       if destination_config['encrypted']
         passphrase = `pass show encryption/backup | head -1`.chomp
         env['BORG_PASSPHRASE'] = passphrase
       end
-      command.prepend(backup_config['sudo'] ? 'sudo ' : '')
-      IO.popen(env, command).read.chomp
+
+      # add sudo
+      args.unshift 'sudo' if backup_config['sudo']
+
+      command = args.join(' ')
+
+      # execute command
+      exit_status = nil
+      output = nil
+      if options[:continous_output]
+        system(env, command)
+        exit_status = $?
+      else
+        Open3.popen3(env, command) do |stdin, stdout, stderr, wait_thread|
+          stdin.close
+          exit_status = wait_thread.value
+          output = exit_status.success? ? stdout.read : stderr.read
+        end
+      end
+
+      # throw execption
+      unless exit_status.success?
+        env_string = env.map {|k, v| [k,v].join('=')}.join(' ')
+        abort("#{output}\nCommand failed.\nDo you have connection to borg repository #{repo}?\nTry it manually:\n#{env_string} #{command}")
+      end
+
+      output
+    end
+
+    def repo
+      File.join(destination, dirname)
     end
 
     def destination
@@ -213,7 +266,9 @@ module BackupLib
     def notify(message)
       notification_port = destination_config['notification_port'].to_s
       if !host.nil? && !notification_port.nil? && message.to_s.length > 0
-        system('message_ping', host, notification_port, "'#{message.gsub("'", '"')}'")
+        socket = TCPSocket.new(host, notification_port)
+        socket.puts message
+        socket.close
       end
     end
 
@@ -245,6 +300,14 @@ module BackupLib
       last_date.year == YEAR_OLD
     end
 
+    def execute_backup!
+      Executor.new(self).start
+    end
+
+    def backup_config
+      BACKUPS[name] || {}
+    end
+
     private
 
     def ssh_hostname
@@ -259,10 +322,6 @@ module BackupLib
 
     def destination_config
       CONFIG['destinations'][destination_key]
-    end
-
-    def backup_config
-      BACKUPS[name] || {}
     end
 
     # Convert current time to UTC because `last_date` is set to UTC
@@ -332,7 +391,7 @@ module BackupLib
         hash.merge(key => Interval::DATE_OLD)
       end
 
-      File.open(@file_path, "r") do |file|
+      File.open(@file_path, 'r') do |file|
         file.each_line do |line|
           name, last_date = line.chomp.split(';')
           groups[name] = Time.parse(last_date)
@@ -340,6 +399,57 @@ module BackupLib
       end
 
       groups
+    end
+  end
+
+  class Executor
+    def initialize(interval)
+      @interval = interval
+    end
+
+    def start
+      execute_all(backup_config['run_before'])
+      execute_with_continous_output(create_command)
+      execute_with_continous_output(prune_command) if backup_config['prune']
+      execute_all(backup_config['run_after'])
+    end
+
+    private
+
+    def create_command
+      name = Time.now.strftime(backup_config['naming'])
+
+      additional_args = []
+      %w(exclude exclude-if-present).each do |option|
+        next unless backup_config[option]
+        additional_args << backup_config[option].reduce([]) { |args, pattern| [*args, "--#{option}", "'#{pattern}'"] }
+      end
+
+      additional_flags = convert_to_flags(backup_config['flags'])
+      additional_flags.flatten!
+
+      ['borg', 'create', '-C', backup_config['compression'], *additional_args, *additional_flags, "#{@interval.repo}::#{name}", *backup_config['sources']]
+    end
+
+    def prune_command
+      keepings = backup_config['prune'].reduce([]) { |args, (k, v)| [*args, "--keep-#{k}", v.to_s] }
+      ['borg', 'prune', *keepings, @interval.repo]
+    end
+
+    def convert_to_flags(flags)
+      (backup_config['flags'] || []).map { |flag| "--#{flag}" }
+    end
+
+    def execute_all(commands)
+      (commands || []).all? { |cmd| @interval.execute_command({}, cmd) }
+    end
+
+    def execute_with_continous_output(cmd)
+      @interval.execute_command({}, cmd, continous_output: true)
+    end
+
+    def backup_config
+      @interval.backup_config
     end
   end
 end
