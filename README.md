@@ -38,6 +38,7 @@ Don't forget to unmount!
 
 ## Installation
 
+1. Clone this repo to `/tmp`
 1. Install `borg`
 1. Install `pass`
 1. Install `openvpn`
@@ -69,7 +70,8 @@ I recommend using `ssh-agent` and `gpg-agent`.
 
 ## First backup
 
-1. `borg init ...`
+1. Show your current password via `echo $(pass show encryption/backup)`
+1. Init all your repositories via `borg init ... $YOUR_BACKUP_DESTINATION_FOLDER_FROM_CONFIG/home`
 1. Start `backup -n`
 
 ## Contributing
