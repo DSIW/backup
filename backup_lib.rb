@@ -113,13 +113,12 @@ module BackupLib
     end
 
     def self.from_backup_dir
-      @from_backup_dir ||= begin
+      begin
         groups = {}
         names.each do |name|
-          begin
-            interval = Interval.new(name)
-            raise "Not mounted" unless interval.mounted?
-            output = `#{BACKUPS[name]['sudo'] ? 'sudo' : ''} borg list #{interval.destination}/#{BACKUPS[name]['dirname']} | tail -1`.chomp
+          interval = Interval.new(name)
+          if interval.mounted?
+            output = interval.borg_command({}, "borg list #{interval.destination}/#{BACKUPS[name]['dirname']} | tail -1")
             raw_date = output.match(/^(?<name>.*?)\s+/)[:name]
             if raw_date.to_s == ""
               date = DATE_OLD
@@ -127,7 +126,7 @@ module BackupLib
               date = DateTime.strptime(raw_date, BACKUPS[name]['naming'])
             end
             groups[name] = date
-          rescue Exception => e
+          else
             groups[name] = from_config_file[name]
           end
         end
@@ -175,6 +174,16 @@ module BackupLib
 
     def remote?
       destination.include? ':'
+    end
+
+    def borg_command(env, command)
+      env ||= {}
+      if destination_config['encrypted']
+        passphrase = `pass show encryption/backup | head -1`.chomp
+        env['BORG_PASSPHRASE'] = passphrase
+      end
+      command.prepend(backup_config['sudo'] ? 'sudo ' : '')
+      IO.popen(env, command).read.chomp
     end
 
     def destination
