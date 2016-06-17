@@ -44,8 +44,12 @@ module Utils
         options[:force] = true
       end
 
-      opts.on("-l", "--local", "Don't backup to remotes") do
+      opts.on("-l", "--local", "Don't backup to remote machines") do
         options[:only_local] = true
+      end
+
+      opts.on("-r", "--remote", "Don't backup to local machines") do
+        options[:only_remote] = true
       end
 
       opts.on_tail("-h", "--help", "Show this message") do
@@ -59,6 +63,16 @@ module Utils
   def self.exit_with_error(message)
     STDERR.puts Utils.colorize(message, :red)
     exit 1
+  end
+
+  def self.check_connection(ip, max_times = 3)
+    max_times.times do |i|
+      yield(max_times - i)
+      `ping -W 1 -c 1 #{ip} >/dev/null`
+      return true if $? == 0
+    end
+
+    false
   end
 end
 
@@ -75,33 +89,25 @@ Interval.all.group_by { |i| i.destination_key }.each_with_index do |(destination
 end
 
 old_backups = OPTIONS[:force] ? Interval.all : Interval.olds
-
-puts
-puts Utils.colorize("Yeah, nothing to backup!", :green) if old_backups.empty?
+if OPTIONS[:only_local]
+  old_backups = old_backups.select { |b| !b.remote? }
+elsif OPTIONS[:only_remote]
+  old_backups = old_backups.select { |b| b.remote? }
+end
 
 openvpn_pid = nil
 
-def check_connection(ip, max_times = 3)
-  max_times.times do |i|
-    yield(max_times - i)
-    `ping -W 1 -c 1 #{ip} >/dev/null`
-    return true if $? == 0
-  end
-
-  false
-end
-
-# Do backup
-unless old_backups.empty?
+puts
+if old_backups.empty?
+  puts Utils.colorize("Yeah, nothing to backup!", :green)
+else
   groups = old_backups.group_by { |old_backup| old_backup.destination_key }
   groups.each do |group, old_backups|
     old_backups.each_with_index do |old_backup, index|
-      if old_backup.remote? && !OPTIONS[:only_local] || !old_backup.remote?
-        puts Utils.colorize("'#{old_backup.dirname}' (#{old_backup.destination_key}) backup started", :blue)
-      end
+      puts Utils.colorize("'#{old_backup.dirname}' (#{old_backup.destination_key}) backup started", :blue)
 
       unless OPTIONS[:dry_run]
-        if old_backup.remote? && !OPTIONS[:only_local]
+        if old_backup.remote?
           if old_backup.active_vpn?
             puts Utils.colorize("VPN connection already established", :green)
           else
@@ -117,8 +123,8 @@ unless old_backups.empty?
           end
         end
 
-        if old_backup.remote? && !OPTIONS[:only_local]
-          connected = check_connection(old_backup.host, 15) do |rest_secs|
+        if old_backup.remote?
+          connected = Utils.check_connection(old_backup.host, 15) do |rest_secs|
             print Utils.colorize("\rWait #{rest_secs} secs for SSH connection...", :yellow)
           end
           if connected
@@ -131,18 +137,13 @@ unless old_backups.empty?
           old_backup.notify("Backup #{index+1}/#{old_backups.length} started!")
         end
 
-        if old_backup.remote? && !OPTIONS[:only_local] || !old_backup.remote?
-        # if OPTIONS[:only_local] && !old_backup.remote?
-          system({'BORG_ROOT' => old_backup.destination}, 'borg-backup', old_backup.name)
-        end
+        system({'BORG_ROOT' => old_backup.destination}, 'borg-backup', old_backup.name)
 
-        if old_backup.remote? && !OPTIONS[:only_local]
+        if old_backup.remote?
           old_backup.notify("Backup #{index+1}/#{old_backups.length} finished!")
         end
 
-        if old_backup.remote? && !OPTIONS[:only_local] || !old_backup.remote?
-          puts # new line
-        end
+        puts # new line
       end
     end
   end
